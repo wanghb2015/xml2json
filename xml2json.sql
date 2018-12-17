@@ -65,6 +65,7 @@ DECLARE
     IF v_nodeType = dbms_xmldom.DOCUMENT_NODE THEN
       NULL;
     ELSIF v_nodeType IN (dbms_xmldom.ELEMENT_NODE, dbms_xmldom.DOCUMENT_NODE) THEN
+    --dbms_output.put_line(v_nodeName || '<----->' || prm_jsonType || '<----->' || prm_arrayType);
       --名称
       IF prm_arrayType NOT IN (TYPE_ARRAY_BODY, TYPE_ARRAY_END) THEN
         c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || v_nodeName || '":');
@@ -93,9 +94,9 @@ DECLARE
     --遍历子节点，递归解析
     FOR i IN 0 .. (childListSize - 1) LOOP
       --重置变量，释放资源
-      DBMS_XMLDOM.FREENODE(nextChildNode);
-      DBMS_XMLDOM.FREENODE(lastChildNode);
-      DBMS_XMLDOM.FREENODE(childNode);
+      --!!DBMS_XMLDOM.FREENODE不能将DOMNode清空，查阅API没找到合适的方法
+      --DBMS_XMLDOM.FREENODE(nextChildNode);
+      --DBMS_XMLDOM.FREENODE(lastChildNode);
       i_arrayType := 0;
       --子节点
       childNode := dbms_xmldom.item(childList, i);
@@ -109,20 +110,17 @@ DECLARE
         END IF;
         --判断是否为数组
         --下一个节点
-        IF i < childListSize - 1 THEN
-          nextChildNode := dbms_xmldom.item(childList, i + 1);
-        END IF;
+        nextChildNode := dbms_xmldom.item(childList, i + 1);
         --上一个节点
         IF i > 0 THEN
           lastChildNode := dbms_xmldom.item(childList, i - 1);
         END IF;
         --如果与前后节点名称相同
-        IF (NOT DBMS_XMLDOM.ISNULL(nextChildNode) AND DBMS_XMLDOM.GETNODENAME(nextChildNode) = DBMS_XMLDOM.GETNODENAME(childNode)) OR 
-           (NOT DBMS_XMLDOM.ISNULL(lastChildNode) AND DBMS_XMLDOM.GETNODENAME(lastChildNode) = DBMS_XMLDOM.GETNODENAME(childNode)) THEN
+        IF DBMS_XMLDOM.GETNODENAME(nextChildNode) = DBMS_XMLDOM.GETNODENAME(childNode) OR DBMS_XMLDOM.GETNODENAME(lastChildNode) = DBMS_XMLDOM.GETNODENAME(childNode) THEN
           --Array第一个节点
-          IF DBMS_XMLDOM.GETNODENAME(lastChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
+          IF i = 0 OR DBMS_XMLDOM.GETNODENAME(lastChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
             i_arrayType := TYPE_ARRAY_HEAD;
-          ELSIF DBMS_XMLDOM.GETNODENAME(nextChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
+          ELSIF i = childListSize - 1 OR DBMS_XMLDOM.GETNODENAME(nextChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
             --最后一个节点
             i_arrayType := TYPE_ARRAY_END;
           ELSE  
