@@ -9,13 +9,21 @@ DECLARE
   xml_req      XMLTYPE;
   document_req dbms_xmldom.DOMDocument;
   node_req     dbms_xmldom.DOMNode;
-  vv           VARCHAR2(32000);
-  --常量
-  type_Element  CONSTANT INTEGER := 0;
-  type_Object   CONSTANT INTEGER := 1;
-  type_Array    CONSTANT INTEGER := 2;
-  type_ArrayEle CONSTANT INTEGER := 3;
-  type_ArrayObj CONSTANT INTEGER := 4;
+  vv           CLOB;
+  --常量,示例：
+  --<a>1</a> ==> "a":"1"
+  TYPE_ELEMENT  CONSTANT INTEGER := 0;
+  --<a><b>1</b>..</a> ==> "a":{"b":"1",..}
+  TYPE_OBJECT   CONSTANT INTEGER := 1;
+  --<a>1</a><a>2</a> ==> "a":["1","2"]
+  --TYPE_ARRAY    CONSTANT INTEGER := 2;
+  
+  --JSONArray开始，需包“[”
+  TYPE_ARRAY_HEAD CONSTANT INTEGER := 1;
+  --JSONArray中段，不需名称
+  TYPE_ARRAY_BODY CONSTANT INTEGER := 2;
+  --JSONArray结束，需包“]”
+  TYPE_ARRAY_END  CONSTANT INTEGER := 3;
   /*-----------------------------------------------------------------------------------------------
   || 函数名称：fun_appendClob
   || 功能描述：clob添加，因DBMS_LOB.APPEND要求不能为空
@@ -36,8 +44,9 @@ DECLARE
   || 函数名称：fun_traversing
   || 功能描述：遍历Node转换为JSON
   ||----------------------------------------------------------------------------------------------*/
-  FUNCTION fun_traversing(prm_node     IN DBMS_XMLDOM.DOMNode,
-                          prm_jsonType IN INTEGER DEFAULT 1) RETURN ClOB IS
+  FUNCTION fun_traversing(prm_node      IN DBMS_XMLDOM.DOMNode,
+                          prm_jsonType  IN INTEGER DEFAULT 1,
+                          prm_arrayType IN INTEGER DEFAULT 0) RETURN ClOB IS
     c_rtnJSON     CLOB;
     v_nodeValue   VARCHAR2(2000);
     v_nodeName    VARCHAR2(30);
@@ -45,25 +54,24 @@ DECLARE
     childList     dbms_xmldom.DOMNODELIST;
     childListSize NUMBER;
     childNode     dbms_xmldom.domnode;
-    subChildList  dbms_xmldom.DOMNODELIST;
+    lastChildNode dbms_xmldom.domnode;
+    nextChildNode dbms_xmldom.domnode;
     i_jsonType    INTEGER;
+    i_arrayType   INTEGER;
   BEGIN
     v_nodeName := dbms_xmldom.getNodeName(prm_node);
     v_nodeType := dbms_xmldom.getNodeType(prm_node);
-    --区分元素类型
+    --区分元素类型,Document视同Object但不取名称，Element为Object，Text只取值
     IF v_nodeType = dbms_xmldom.DOCUMENT_NODE THEN
-      i_jsonType := type_Object;
-    ELSIF v_nodeType = dbms_xmldom.ELEMENT_NODE THEN
-      --元素类型，只取名称
-      IF prm_jsonType not in (type_ArrayEle, type_ArrayObj) THEN
-        --JSONArray的元素，不再重复取名称
+      NULL;
+    ELSIF v_nodeType IN (dbms_xmldom.ELEMENT_NODE, dbms_xmldom.DOCUMENT_NODE) THEN
+      --DBMS_OUTPUT.PUT_LINE(v_nodeName || '<----->' || prm_jsonType || '<----->' || prm_arrayType);
+      --名称
+      IF prm_arrayType NOT IN (TYPE_ARRAY_BODY, TYPE_ARRAY_END) THEN
         c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || v_nodeName || '":');
-        IF prm_jsonType = type_Array THEN
-          --JSONArray类型，名称包含子元素名称
-          c_rtnJSON := fun_appendClob(c_rtnJSON, '{"');
-          c_rtnJSON := fun_appendClob(c_rtnJSON,
-                          dbms_xmldom.getNodeName(DBMS_XMLDOM.GETFIRSTCHILD(prm_node)));
-          c_rtnJSON := fun_appendClob(c_rtnJSON, '":[');
+        --数组类型，除首个外均不需名称
+        IF prm_arrayType = TYPE_ARRAY_HEAD THEN
+          c_rtnJSON := fun_appendClob(c_rtnJSON, '[');
         END IF;
       END IF;
     ELSIF v_nodeType = dbms_xmldom.TEXT_NODE THEN
@@ -72,57 +80,72 @@ DECLARE
       c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || v_nodeValue || '",');
       RETURN c_rtnJSON;
     END IF;
-    --JSONObject用“{”包裹值部分
-    IF prm_jsonType in (type_Object, type_ArrayObj) THEN
+    --对象类型，包“{”
+    IF prm_jsonType = TYPE_OBJECT THEN
       c_rtnJSON := fun_appendClob(c_rtnJSON, '{');
     END IF;
+    --子集
     childList     := dbms_xmldom.getChildNodes(prm_node);
     childListSize := dbms_xmldom.getLength(childList);
+    --无值元素的处理，例：<ELE/>
+    IF childListSize = 0 AND v_nodeType = dbms_xmldom.ELEMENT_NODE THEN
+      c_rtnJSON := fun_appendClob(c_rtnJSON, '"",');
+    END IF;
     --遍历子节点，递归解析
     FOR i IN 0 .. (childListSize - 1) LOOP
+      --重置变量，释放资源
+      DBMS_XMLDOM.FREENODE(nextChildNode);
+      DBMS_XMLDOM.FREENODE(lastChildNode);
+      DBMS_XMLDOM.FREENODE(childNode);
+      i_arrayType := 0;
+      --子节点
       childNode := dbms_xmldom.item(childList, i);
-      --子节点和长孙节点均为元素类型，深入解析
-      IF dbms_xmldom.getNodeType(childNode) = dbms_xmldom.ELEMENT_NODE AND
-         dbms_xmldom.getNodeType(DBMS_XMLDOM.GETFIRSTCHILD(childNode)) =
-         dbms_xmldom.ELEMENT_NODE THEN
-        --孙子节点，用于判断子节点是否为JSONArray
-        subChildList := dbms_xmldom.getChildNodes(childNode);
-        --孙子节点不止1个，且首尾同名，视为JSONArray
-        --！！！此处未考虑（size = 1）的JSONArray
-        IF dbms_xmldom.getLength(subChildList) > 1 and
-           dbms_xmldom.getNodeName(DBMS_XMLDOM.GETFIRSTCHILD(childNode)) =
-           dbms_xmldom.getNodeName(DBMS_XMLDOM.GETLASTCHILD(childNode)) THEN
-          i_jsonType := type_Array;
-        ELSIF prm_jsonType = type_Array THEN
-          i_jsonType := type_ArrayObj;
+      --子节点若为元素类型，深入解析
+      IF dbms_xmldom.getNodeType(childNode) = dbms_xmldom.ELEMENT_NODE THEN
+        --长孙节点为元素，则该子节点为对象
+        IF dbms_xmldom.getNodeType(DBMS_XMLDOM.GETFIRSTCHILD(childNode)) = dbms_xmldom.ELEMENT_NODE THEN
+          i_jsonType := TYPE_OBJECT;
         ELSE
-          i_jsonType := type_Object;
+          i_jsonType := TYPE_ELEMENT;
         END IF;
-      ELSIF prm_jsonType = type_Array THEN
-        --如果当前为JSONArray，子元素进行特殊处理
-        i_jsonType := type_ArrayEle;
-      ELSE
-        i_jsonType := type_Element;
+        --判断是否为数组
+        --下一个节点
+        IF i < childListSize - 1 THEN
+          nextChildNode := dbms_xmldom.item(childList, i + 1);
+        END IF;
+        --上一个节点
+        IF i > 0 THEN
+          lastChildNode := dbms_xmldom.item(childList, i - 1);
+        END IF;
+        --如果与前后节点名称相同
+        IF (NOT DBMS_XMLDOM.ISNULL(nextChildNode) AND DBMS_XMLDOM.GETNODENAME(nextChildNode) = DBMS_XMLDOM.GETNODENAME(childNode)) OR 
+           (NOT DBMS_XMLDOM.ISNULL(lastChildNode) AND DBMS_XMLDOM.GETNODENAME(lastChildNode) = DBMS_XMLDOM.GETNODENAME(childNode)) THEN
+          --Array第一个节点
+          IF DBMS_XMLDOM.GETNODENAME(lastChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
+            i_arrayType := TYPE_ARRAY_HEAD;
+          ELSIF DBMS_XMLDOM.GETNODENAME(nextChildNode) != DBMS_XMLDOM.GETNODENAME(childNode) THEN
+            --最后一个节点
+            i_arrayType := TYPE_ARRAY_END;
+          ELSE  
+            --数组中段
+            i_arrayType := TYPE_ARRAY_BODY;
+          END IF;
+        END IF;
       END IF;
-      c_rtnJSON := fun_appendClob(c_rtnJSON, fun_traversing(childNode, i_jsonType));
+      c_rtnJSON := fun_appendClob(c_rtnJSON, fun_traversing(childNode, i_jsonType, i_arrayType));
     END LOOP;
-    --除元素类型，均截去最后一位的“,”
-    IF prm_jsonType not in (type_Element, type_ArrayEle) THEN
+    --对象类型，截去末尾","后添加结束符“}”
+    IF prm_jsonType = TYPE_OBJECT THEN
       c_rtnJSON := regexp_replace(c_rtnJSON, ',$', '');
+      c_rtnJSON := fun_appendClob(c_rtnJSON, '},');
     END IF;
-    --结束符
-    CASE prm_jsonType
-      WHEN type_Object THEN
-        c_rtnJSON := fun_appendClob(c_rtnJSON, '},');
-      WHEN type_Array THEN
-        c_rtnJSON := fun_appendClob(c_rtnJSON, ']},');
-      WHEN type_ArrayObj THEN
-        c_rtnJSON := fun_appendClob(c_rtnJSON, '},');
-      ELSE
-        NULL;
-    END CASE;
-    --二次截去，较前次增加ArrayObjcet类型
-    IF prm_jsonType NOT IN (type_Element, type_ArrayEle, type_ArrayObj) THEN
+    --数组类型，截去末尾","后添加结束符“]”
+    IF prm_arrayType = TYPE_ARRAY_END THEN
+      c_rtnJSON := regexp_replace(c_rtnJSON, ',$', '');
+      c_rtnJSON := fun_appendClob(c_rtnJSON, '],');
+    END IF;
+    --DOCUMENT类型返回时，再次截去末尾","
+    IF v_nodeType = dbms_xmldom.DOCUMENT_NODE THEN
       c_rtnJSON := regexp_replace(c_rtnJSON, ',$', '');
     END IF;
     RETURN c_rtnJSON;
@@ -132,5 +155,5 @@ BEGIN
   document_req := DBMS_XMLDOM.newdomdocument(xml_req);
   node_req     := dbms_xmldom.makenode(document_req);
   vv           := fun_traversing(node_req);
-  dbms_output.put_line(vv);
+  insert into tt2 (c) values (vv);
 END;
