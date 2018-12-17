@@ -33,7 +33,7 @@ DECLARE
     --可扩展
     TYPE type_enum_ascii IS ARRAY(1) OF NUMBER;
     --10.换行符；
-    enum_ascii type_enum_ascii := (10);
+    enum_ascii type_enum_ascii := type_enum_ascii(10);
   BEGIN
     FOR i IN 1 .. enum_ascii.COUNT LOOP
       rtn_char := REPLACE(prm_char, CHR(enum_ascii(i)));
@@ -168,5 +168,6 @@ BEGIN
   document_req := DBMS_XMLDOM.newdomdocument(xml_req);
   node_req     := dbms_xmldom.makenode(document_req);
   vv           := fun_traversing(node_req);
-  insert into tt2 (c) values (vv);
+  INSERT INTO tt2 (c) VALUES (vv);
+  COMMIT;
 END;
