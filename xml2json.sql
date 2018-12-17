@@ -25,6 +25,22 @@ DECLARE
   --JSONArray结束，需包“]”
   TYPE_ARRAY_END  CONSTANT INTEGER := 3;
   /*-----------------------------------------------------------------------------------------------
+  || 函数名称：fun_removeSp
+  || 功能描述：去除特殊符号
+  ||----------------------------------------------------------------------------------------------*/
+  FUNCTION fun_removeSp(prm_char IN VARCHAR2) RETURN VARCHAR2 IS
+    rtn_char VARCHAR2(2000);
+    --可扩展
+    TYPE type_enum_ascii IS ARRAY(1) OF NUMBER;
+    --10.换行符；
+    enum_ascii type_enum_ascii := (10);
+  BEGIN
+    FOR i IN 1 .. enum_ascii.COUNT LOOP
+      rtn_char := REPLACE(prm_char, CHR(enum_ascii(i)));
+    END LOOP;
+    RETURN rtn_char;
+  END;
+  /*-----------------------------------------------------------------------------------------------
   || 函数名称：fun_appendClob
   || 功能描述：clob添加，因DBMS_LOB.APPEND要求不能为空
   ||----------------------------------------------------------------------------------------------*/
@@ -77,7 +93,7 @@ DECLARE
     ELSIF v_nodeType = dbms_xmldom.TEXT_NODE THEN
       --文本类型，取值，结束退出
       v_nodeValue := DBMS_XMLDOM.GETNODEVALUE(prm_node);
-      c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || v_nodeValue || '",');
+      c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || fun_removeSp(v_nodeValue) || '",');
       RETURN c_rtnJSON;
     END IF;
     --对象类型，包“{”
