@@ -65,7 +65,6 @@ DECLARE
     IF v_nodeType = dbms_xmldom.DOCUMENT_NODE THEN
       NULL;
     ELSIF v_nodeType IN (dbms_xmldom.ELEMENT_NODE, dbms_xmldom.DOCUMENT_NODE) THEN
-      --DBMS_OUTPUT.PUT_LINE(v_nodeName || '<----->' || prm_jsonType || '<----->' || prm_arrayType);
       --名称
       IF prm_arrayType NOT IN (TYPE_ARRAY_BODY, TYPE_ARRAY_END) THEN
         c_rtnJSON := fun_appendClob(c_rtnJSON, '"' || v_nodeName || '":');
